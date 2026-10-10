@@ -1,0 +1,223 @@
+-- Anti-Lag Steal An Egg: xóa sky + hiệu ứng + vật trang trí
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+local MaterialService = game:GetService("MaterialService")
+
+local lp = Players.LocalPlayer
+local Terrain = workspace:FindFirstChildOfClass("Terrain")
+
+-- ========== CẤU HÌNH ==========
+local REMOVE_SKY = true
+local REMOVE_PARTICLES = true
+local REMOVE_DECALS = true
+local REMOVE_LIGHTS = true
+local FLATTEN_MATERIALS = true
+local HIDE_OTHER_PLAYERS = false -- true = ẩn người khác (FPS tăng mạnh)
+local CLEAN_EVERY = 2           -- giây quét lại
+
+-- ========== ĐỒ HỌA THẤP ==========
+pcall(function()
+    settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+    settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
+end)
+
+Lighting.GlobalShadows = false
+Lighting.FogEnd = 1e9
+Lighting.FogStart = 1e9
+Lighting.Brightness = 2
+Lighting.Ambient = Color3.fromRGB(180, 180, 180)
+Lighting.OutdoorAmbient = Color3.fromRGB(180, 180, 180)
+Lighting.EnvironmentDiffuseScale = 0
+Lighting.EnvironmentSpecularScale = 0
+pcall(function()
+    Lighting.Technology = Enum.Technology.Compatibility
+end)
+
+-- Xóa bầu trời
+if REMOVE_SKY then
+    for _, v in ipairs(Lighting:GetChildren()) do
+        if v:IsA("Sky") or v:IsA("Atmosphere")
+            or v:IsA("BloomEffect") or v:IsA("BlurEffect")
+            or v:IsA("SunRaysEffect") or v:IsA("ColorCorrectionEffect")
+            or v:IsA("DepthOfFieldEffect") or v:IsA("Clouds") then
+            pcall(function() v:Destroy() end)
+        end
+    end
+end
+
+-- Nước / terrain nhẹ
+if Terrain then
+    pcall(function()
+        Terrain.WaterWaveSize = 0
+        Terrain.WaterWaveSpeed = 0
+        Terrain.WaterReflectance = 0
+        Terrain.WaterTransparency = 0.6
+        Terrain.Decoration = false
+    end)
+end
+
+-- Material service (nếu có)
+pcall(function()
+    MaterialService.Use2022Materials = false
+end)
+
+local BAD_NAME = {
+    particle = true, trail = true, beam = true, smoke = true,
+    fire = true, sparkle = true, effect = true, vfx = true,
+    glow = true, aura = true, leaf = true, petal = true,
+}
+
+local function isJunkName(n)
+    n = string.lower(n or "")
+    for k in pairs(BAD_NAME) do
+        if string.find(n, k, 1, true) then return true end
+    end
+    return false
+end
+
+local function clean(obj)
+    if not obj or not obj.Parent then return end
+
+    -- Không đụng character của mình
+    local char = lp.Character
+    if char and obj:IsDescendantOf(char) then return end
+
+    if REMOVE_PARTICLES then
+        if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam")
+            or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then
+            pcall(function() obj:Destroy() end)
+            return
+        end
+    end
+
+    if obj:IsA("Explosion") then
+        pcall(function() obj:Destroy() end)
+        return
+    end
+
+    if REMOVE_DECALS and (obj:IsA("Decal") or obj:IsA("Texture")) then
+        pcall(function() obj:Destroy() end)
+        return
+    end
+
+    if REMOVE_LIGHTS and (obj:IsA("PointLight") or obj:IsA("SpotLight") or obj:IsA("SurfaceLight")) then
+        pcall(function() obj.Enabled = false end)
+        return
+    end
+
+    if FLATTEN_MATERIALS and (obj:IsA("BasePart") or obj:IsA("MeshPart") or obj:IsA("UnionOperation")) then
+        pcall(function()
+            obj.Material = Enum.Material.SmoothPlastic
+            obj.Reflectance = 0
+            obj.CastShadow = false
+            if obj:IsA("MeshPart") then
+                obj.RenderFidelity = Enum.RenderFidelity.Performance
+                obj.TextureID = ""
+            end
+        end)
+    end
+
+    -- Xóa model trang trí theo tên (lá, particle, vfx…)
+    if obj:IsA("Model") or obj:IsA("Folder") then
+        if isJunkName(obj.Name) then
+            pcall(function() obj:Destroy() end)
+            return
+        end
+    end
+
+    -- SpecialMesh / FileMesh nặng
+    if obj:IsA("SpecialMesh") then
+        pcall(function()
+            if obj.TextureId and obj.TextureId \~= "" then
+                obj.TextureId = ""
+            end
+        end)
+    end
+end
+
+local function cleanAll()
+    for _, v in ipairs(workspace:GetDescendants()) do
+        clean(v)
+    end
+    for _, v in ipairs(Lighting:GetChildren()) do
+        if v:IsA("Sky") or v:IsA("PostEffect") or v:IsA("Atmosphere") or v:IsA("Clouds") then
+            pcall(function() v:Destroy() end)
+        end
+    end
+end
+
+-- Ẩn người chơi khác (tùy chọn)
+local function hideOthers()
+    if not HIDE_OTHER_PLAYERS then return end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr \~= lp and plr.Character then
+            for _, p in ipairs(plr.Character:GetDescendants()) do
+                if p:IsA("BasePart") then
+                    p.LocalTransparencyModifier = 1
+                elseif p:IsA("Decal") or p:IsA("ParticleEmitter") or p:IsA("Trail") then
+                    pcall(function() p:Destroy() end)
+                end
+            end
+        end
+    end
+end
+
+-- Force “load” map: bay qua / chờ stream (client không force full map server)
+-- Chỉ giảm lag khi map đã stream về
+cleanAll()
+hideOthers()
+
+workspace.DescendantAdded:Connect(function(obj)
+    task.defer(function()
+        clean(obj)
+    end)
+end)
+
+Lighting.ChildAdded:Connect(function(obj)
+    if obj:IsA("Sky") or obj:IsA("PostEffect") or obj:IsA("Atmosphere") or obj:IsA("Clouds") then
+        task.defer(function()
+            pcall(function() obj:Destroy() end)
+        end)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(CLEAN_EVERY)
+        cleanAll()
+        hideOthers()
+    end
+end)
+
+-- Nút bật/tắt
+local gui = Instance.new("ScreenGui")
+gui.Name = "AntiLagSAE"
+gui.ResetOnSpawn = false
+gui.Parent = lp:WaitForChild("PlayerGui")
+
+local btn = Instance.new("TextButton")
+btn.Size = UDim2.new(0, 130, 0, 36)
+btn.Position = UDim2.new(0, 12, 0.5, 0)
+btn.BackgroundColor3 = Color3.fromRGB(25, 110, 55)
+btn.Text = "Anti-Lag: BẬT"
+btn.TextColor3 = Color3.new(1, 1, 1)
+btn.Font = Enum.Font.GothamBold
+btn.TextSize = 13
+btn.Parent = gui
+Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+local on = true
+btn.MouseButton1Click:Connect(function()
+    on = not on
+    if on then
+        btn.Text = "Anti-Lag: BẬT"
+        btn.BackgroundColor3 = Color3.fromRGB(25, 110, 55)
+        cleanAll()
+    else
+        btn.Text = "Anti-Lag: TẮT"
+        btn.BackgroundColor3 = Color3.fromRGB(120, 40, 40)
+    end
+end)
+
+print("✅ Anti-Lag SAE | Xóa sky + particle + texture | Material plastic")
